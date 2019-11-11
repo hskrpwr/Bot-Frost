@@ -55,6 +55,8 @@ def store_next_opponent(year):
                 config.current_game.append(events["away_team"])
             config.current_game.append(check_date)
             config.current_game.append(events["week"])
+
+            print(config.current_game)
             break
         # Used for navigating season_bets JSON
         counter += 1
@@ -69,8 +71,7 @@ def game_number(team):
     gameNumber = int(gameNumber["game_number"])
 
     return int(gameNumber)
-    # return config.curren
-    # t_game[2]
+
 
 def create_embed():
     global embed
@@ -94,6 +95,11 @@ class BetCommands(commands.Cog, name="Betting Commands"):
         dbAvailable = config.pingMySQL()
         if not dbAvailable:
             await ctx.send("The MySQL database is currently unavailable. Please try again later.")
+            return
+
+        apiAvailable = requests.get("https://api.collegefootballdata.com/lines?year=2019&week=9&seasonType=regular&team=nebraska")
+        if apiAvailable.status_code == 502:  # TODO Add other status codes, idk what they are yet
+            await ctx.send("The API services (https://api.collegefootballdata.com) is currently unavailable. Please try again later.")
             return
 
         # Load next opponent and bets
@@ -136,16 +142,24 @@ class BetCommands(commands.Cog, name="Betting Commands"):
         embed.add_field(name="Usage", value="$bet - Show this command\n$bet show - Shows your currently placed bets\n$bet all - Shows the current breakout of all bets placed\n$bet winners [opponent] - Shows the winners for the selected opponent.")
 
         if lines:
-            if lines[0]["formattedSpread"].startswith("Nebraska"):
-                embed.add_field(name="Spread ({})".format(lines[0]["provider"]), value="{}".format(lines[0]["formattedSpread"]), inline=False)
-            else:
-                embed.add_field(name="Spread ({})".format(lines[0]["provider"]), value="+{} Nebraska".format(abs(lines[0]["spread"])), inline=False)
-            embed.add_field(name="Total Points/Over Under ({})".format(lines[0]["provider"]), value="{}".format(lines[0]["overUnder"]), inline=False)
+            formatted_spread = lines[0]["formattedSpread"]
+            provider = lines[0]["provider"]
+            spread = float(lines[0]["spread"])
+            over_under = lines[0]["overUnder"]
+            if over_under is None:
+                over_under = "N/A"
 
             if lines[0]["formattedSpread"].startswith("Nebraska"):
-                update_db_lines(lines[0], config.current_game[2], lines[0]["spread"])
+                embed.add_field(name=f"Spread ({provider})", value=f"{formatted_spread}", inline=False)
             else:
-                update_db_lines(lines[0], config.current_game[2], abs(lines[0]["spread"]))
+                embed.add_field(name=f"Spread ({provider})", value=f"+{abs(spread)} Nebraska", inline=False)
+
+            embed.add_field(name=f"Total Points/Over Under ({provider})", value=f"{over_under}", inline=False)
+
+            if lines[0]["formattedSpread"].startswith("Nebraska"):
+                update_db_lines(lines[0], config.current_game[2], spread)
+            else:
+                update_db_lines(lines[0], config.current_game[2], abs(spread))
         else:
             embed.add_field(name="Spread (TBD)", value="TBD")
             embed.add_field(name="Total Points/Over Under (TBD)", value="TBD")
@@ -161,7 +175,11 @@ class BetCommands(commands.Cog, name="Betting Commands"):
 
         msg_sent = await ctx.send(embed=embed)
         check_game_datetime = config.current_game[1]
-        if check_now + + datetime.timedelta(hours=5) < check_game_datetime:
+
+        print(check_now)
+
+        # if check_now + datetime.timedelta(hours=5) < check_game_datetime:
+        if check_now < check_game_datetime:
             for e in bet_emojis:
                 await msg_sent.add_reaction(e)
         else:
@@ -424,17 +442,24 @@ class BetCommands(commands.Cog, name="Betting Commands"):
         if lines:
             for line in lines:
                 if line["provider"] == "Bovada":
+                    formatted_spread = line["formattedSpread"]
+                    provider = line["provider"]
+                    spread = float(line["spread"])
+                    over_under = line["overUnder"]
+                    if over_under is None:
+                        over_under = "N/A"
 
                     if line["formattedSpread"].startswith("Nebraska"):
-                        embed.add_field(name="Spread ({})".format(line["provider"]), value="{}".format(line["formattedSpread"]), inline=False)
+                        embed.add_field(name=f"Spread ({provider})", value=f"{formatted_spread}", inline=False)
                     else:
-                        embed.add_field(name="Spread ({})".format(line["provider"]), value="+{} Nebraska".format(abs(line["spread"])), inline=False)
-                    embed.add_field(name="Total Points/Over Under ({})".format(line["provider"]), value="{}".format(line["overUnder"]), inline=False)
+                        embed.add_field(name=f"Spread ({provider})", value=f"+{abs(spread)} Nebraska", inline=False)
+
+                    embed.add_field(name=f"Total Points/Over Under ({provider})", value=f"{over_under}", inline=False)
 
                     if line["formattedSpread"].startswith("Nebraska"):
-                        update_db_lines(line, gameNumber, line["spread"])
+                        update_db_lines(line, config.current_game[2], spread)
                     else:
-                        update_db_lines(line, gameNumber, abs(line["spread"]))
+                        update_db_lines(line, config.current_game[2], abs(spread))
                     break
         else:
             embed.add_field(name="Spread", value="TBD")
@@ -464,14 +489,10 @@ class BetCommands(commands.Cog, name="Betting Commands"):
 
         result_spread = None
         if game_info["spread_value"] > 0:
-            print("Comparing: ", game_info["opponent_score"], "-", game_info["score"], "=", game_info["opponent_score"] - game_info["score"], ">", game_info["spread_value"])
-
             result_spread = not bool(
                 (game_info["opponent_score"] - game_info["score"]) > game_info["spread_value"]
             )
         elif game_info["spread_value"] < 0:
-            print("Comparing: ", game_info["score"], "-", game_info["opponent_score"], "=", game_info["score"] - game_info["opponent_score"], ">", game_info["spread_value"])
-
             result_spread = bool(
                 (game_info["score"] - game_info["opponent_score"]) > abs(game_info["spread_value"])
             )
